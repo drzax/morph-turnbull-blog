@@ -11,10 +11,10 @@ var queue = require('queue-async');
 var db;
 var q;
 var fetched = [];
-var regexHansard = new RegExp('^.+\\(.+\\)( \\([0-9]{1,2}:[0-9]{2}\\))?:','i');
-var regexPMHansard = new RegExp("^Mr Turnbull \\(.+\\)( \\([0-9]{1,2}:[0-9]{2}\\))?:", 'i');
+var regexHansard = /^.+\(.+\)(\s\([0-9]{1,2}:[0-9]{2}\))?:/i;
+var regexPMHansard = /^(Mr|Malcolm)\sTurnbull\s\(.+\)(\s\([0-9]{1,2}:[0-9]{2}\))?:/i;
 var regexPrefix = /^.{1,50}:/i;
-var regexPMPrefix = /^Mr Turnbull:/i;
+var regexPMPrefix = /^((Mr|Malcolm)\sTurnbull|Prime\sMinister):/i;
 
 const DOMAIN = 'http://www.malcolmturnbull.com.au';
 const URL = DOMAIN + '/media';
@@ -53,7 +53,7 @@ function fetchPage(url, callback) {
 
 		request(url, function (error, response, body) {
 			if (error) {
-				console.log("Error requesting page: " + error);
+				console.log(`Error requesting ${url}: ${error}`);
 				return;
 			}
 			callback(body);
@@ -96,26 +96,45 @@ function processDetailPage(body) {
 	// Parse the content to extract only Turnbull's speech
 	data.$parsed = '';
 	var isPM = true;
-	$content.children().each(function() {
-		var par = $(this).text().trim();
+	var whitelist = false;
+	data.$content.split("\n").forEach(function(par) {
 
-		// Take out some stuff
-		if (/^E\&OE/.test($(this).text())) return;
+		par = par.trim();
 
-		if (isHeading(this)) {
-			isPM = isPMHeading(this);
+		// Don't take empty pars
+		if (!par.length) return;
+
+		// console.log(par);
+
+		// Don't take silly pars
+		if (/^E\&OE/.test(par)) return;
+		if (/^EO\&E/.test(par)) return;
+
+		if (isHeading(par)) {
+			whitelist = whitelist ||
+				data.$category === 'Blog' ||
+				/MEDIA\sRELEASE/.test(par) ||
+				/CHANGES TO THE MINISTRY/.test(par) ||
+				/KEYNOTE ADDRESS/.test(par) ||
+				/JOINT STATEMENT/.test(par) ||
+				/RESPONSE TO THE SENATE SELECT COMMITTEE ON THE NBN/.test(par) ||
+				/ECONOMIC LEADERS MEETING/.test(par);
+			isPM = isPMHeading(par) || whitelist;
+			// console.log('heading', isPM);
 			// Don't take headings
 			return;
 		}
 
-		if (isPrefixed(this)) {
-			isPM = isPMPrefixed(this);
+		if (isPrefixed(par)) {
+			isPM = isPMPrefixed(par);
+			// console.log('prefix', isPM);
 			// remove prefix
 			par = par.replace(regexPMPrefix,'');
 		}
 
-		if (isHansard(this)) {
-			isPM = isPMHansard(this);
+		if (isHansard(par)) {
+			isPM = isPMHansard(par);
+			// console.log('hansard', isPM);
 			par = par.replace(regexPMHansard,'');
 		}
 
@@ -145,31 +164,31 @@ function processDetailPage(body) {
 		)`, data, (global.gc) ? global.gc : null);
 	}, handleErr);
 
-
-
-	function isHansard(el) {
-		return regexHansard.test($(el).text().trim());
+	function isHansard(par) {
+		return regexHansard.test(par);
 	}
 
-	function isPMHansard(el) {
-		return regexPMHansard.test($(el).text().trim());
+	function isPMHansard(par) {
+		return regexPMHansard.test(par);
 	}
 
-	function isPrefixed(el) {
-		return regexPrefix.test($(el).text().trim()) && $(el).children() && $(el).children().first().is('strong');
+	function isPrefixed(par) {
+		return regexPrefix.test(par);
 	}
 
-	function isPMPrefixed(el) {
-		return regexPMPrefix.test($(el).text().trim());
+	function isPMPrefixed(par) {
+		return regexPMPrefix.test(par);
 	}
 
-	function isHeading(el) {
-		return ($(el).children() && $(el).children().first().is('strong')) && /^.+:?$/.test($(el).text().trim());
+	function isHeading(par) {
+		return /^.{0,50}:$/.test(par) || /^[A-Z\s,\-—\./&]+$/.test(par);
 	}
 
-	function isPMHeading(el) {
-		var txt = $(el).text().trim();
-		return isHeading(el) && (/^PRIME MINISTER/i.test(txt) || /^(MALCOLM )?TURNBULL/i.test(txt));
+	function isPMHeading(par) {
+		return isHeading(par) && (
+			/^PRIME\sMINISTER/i.test(par) ||
+			/^((Mr|MALCOLM)\s)?TURNBULL/i.test(par)
+		);
 	}
 }
 
